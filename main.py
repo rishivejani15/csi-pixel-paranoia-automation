@@ -30,3 +30,21 @@ def scan_qr(request: ScanRequest):
         return {"message": f"No user found. Created new user with QR ID '{qr_id}'."}
 
     return {"message": f"User with QR ID '{qr_id}' marked as REGISTERED!", "updated_data": result}
+
+
+class FoodRequest(BaseModel):
+    qr_id: str
+
+@app.post("/had_food")
+def mark_had_food(request: FoodRequest):
+    qr_id = request.qr_id.strip()
+
+    response = supabase.table("users").update({"hadFood": True}).eq("qr_id", qr_id).execute()
+    result = response.data if hasattr(response, "data") else response.json()
+
+    print("Supabase response:", result)
+
+    if not result:
+        return {"message": f"No user found with QR ID '{qr_id}'."}
+
+    return {"message": f"User with QR ID '{qr_id}' marked as hadFood = TRUE!", "updated_data": result}
