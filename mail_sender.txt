@@ -1,0 +1,242 @@
+/**
+ * Handles Google Form submissions to:
+ * 1. Insert a new user and a unique QR ID into Supabase.
+ * 2. Send an email with the generated QR code.
+ * 3. Log the QR URL to the Google Sheet.
+ *
+ * @param {Object} e The event object passed upon form submission.
+ */
+function onFormSubmit(e) {
+  // --- CONFIGURATION ---
+  // Ensure these match your sheet columns
+  const NAME_COL = 2; // Column B (Name)
+  const EMAIL_COL = 3; // Column C (Email)
+
+  // Use your actual Supabase details
+  const SUPABASE_URL = "https://qrmpyepklaetnhikxibr.supabase.co/rest/v1/users";
+  const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFybXB5ZXBrbGFldG5oaWt4aWJyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MDMzODU1NSwiZXhwIjoyMDc1OTE0NTU1fQ.m1kBtvVdHl1ynlbfClx2CJz3zoHnUNGvgTUjX720a7s";
+
+  // --- SAFETY CHECKS & DATA PREP ---
+  if (!e || !e.source) {
+    console.log("Error: Script running outside of a form submission event.");
+    return;
+  }
+
+  const sheet = e.source.getActiveSheet();
+  const row = e.range.getRow();
+  if (row === 1) return; // Skip header row processing
+
+  // Get and sanitize data
+  const name = sheet.getRange(row, NAME_COL).getValue().toString().trim();
+  const email = sheet.getRange(row, EMAIL_COL).getValue().toString().trim().toLowerCase();
+
+  if (!email || !email.includes("@")) {
+    console.log(`❌ Invalid data in row ${row}: Name="${name}", Email="${email}"`);
+    return;
+  }
+
+  console.log(`Processing submission for: ${name} (${email})`);
+
+  // --- QR GENERATION & DATA PAYLOAD ---
+  const uniqueID = Utilities.getUuid();
+  const qrData = `EventPass|${name}|${email}|${uniqueID}`;
+  const qrUrl =
+    "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" +
+    encodeURIComponent(qrData);
+
+  const payload = {
+    name: name,
+    email: email,
+    status: "PENDING",
+    hadFood: false,
+    qr_id: uniqueID,
+  };
+
+  let supabaseSuccess = false;
+
+  // --- SUPABASE API POST REQUEST ---
+  const options = {
+    method: "POST",
+    contentType: "application/json",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: "Bearer " + SUPABASE_KEY,
+      Prefer: "return=minimal",
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(SUPABASE_URL, options);
+    const code = response.getResponseCode();
+    const responseText = response.getContentText();
+
+    if (code >= 200 && code < 300) {
+      console.log(`✅ Supabase Insert successful! Status: ${code}`);
+      supabaseSuccess = true;
+    } else {
+      console.log(`❌ Supabase Insert Failed! Status: ${code}. Response: ${responseText}`);
+    }
+  } catch (err) {
+    console.log(`🚨 Critical Supabase/Network Error: ${err.toString()}`);
+  }
+
+  // --- EMAIL SENDING (ONLY IF SUPABASE INSERT WORKED) ---
+  if (supabaseSuccess) {
+    const subject = "🎨 Welcome to Pixel Paranoia - Your Entry Pass";
+    const htmlBody = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5;">
+        <table role="presentation" style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td align="center" style="padding: 40px 20px;">
+              <table role="presentation" style="max-width: 600px; width: 100%; border-collapse: collapse; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                
+                <!-- Header -->
+                <tr>
+                  <td style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 30px; text-align: center; border-radius: 12px 12px 0 0;">
+                    <h1 style="margin: 0; color: #ffffff; font-size: 32px; font-weight: bold; letter-spacing: -0.5px;">
+                      PIXEL PARANOIA
+                    </h1>
+                    <p style="margin: 10px 0 0 0; color: #e0e7ff; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">
+                      UI/UX Hackathon
+                    </p>
+                  </td>
+                </tr>
+                
+                <!-- Content -->
+                <tr>
+                  <td style="padding: 40px 30px;">
+                    <h2 style="margin: 0 0 20px 0; color: #1f2937; font-size: 24px; font-weight: 600;">
+                      Hello ${name}! 👋
+                    </h2>
+                    <p style="margin: 0 0 20px 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                      Thank you for registering for <strong>Pixel Paranoia</strong>! We're excited to have you join us for this creative UI/UX hackathon experience.
+                    </p>
+                    <p style="margin: 0 0 30px 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                      Your entry pass is ready! Please save this QR code and present it at the check-in counter.
+                    </p>
+                    
+                    <!-- QR Code Section -->
+                    <div style="background-color: #f9fafb; border-radius: 8px; padding: 30px; text-align: center; margin: 0 0 30px 0;">
+                      <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">
+                        Your Entry Pass
+                      </p>
+                      <img src="${qrUrl}" alt="QR Code Entry Pass" style="max-width: 200px; width: 100%; height: auto; border: 3px solid #667eea; border-radius: 8px; display: inline-block;">
+                      <p style="margin: 20px 0 0 0; color: #9ca3af; font-size: 12px;">
+                        Save this QR code for easy access
+                      </p>
+                    </div>
+                    
+                    <!-- Important Info Box -->
+                    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px 20px; border-radius: 4px; margin: 0 0 30px 0;">
+                      <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">
+                        <strong>⚠ Important:</strong> Keep this email handy. You'll need to show your QR code at registration.
+                      </p>
+                    </div>
+                    
+                    <p style="margin: 0; color: #4b5563; font-size: 16px; line-height: 1.6;">
+                      Get ready to design, innovate, and push the boundaries of user experience!
+                    </p>
+                  </td>
+                </tr>
+                
+                <!-- Footer -->
+                <tr>
+                  <td style="background-color: #f9fafb; padding: 30px; text-align: center; border-radius: 0 0 12px 12px; border-top: 1px solid #e5e7eb;">
+                    <p style="margin: 0 0 10px 0; color: #1f2937; font-size: 14px; font-weight: 600;">
+                      See you at the hackathon! 🚀
+                    </p>
+                    <p style="margin: 0; color: #6b7280; font-size: 13px;">
+                      The Pixel Paranoia Team
+                    </p>
+                  </td>
+                </tr>
+                
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    try {
+      MailApp.sendEmail({
+        to: email,
+        subject: subject,
+        htmlBody: htmlBody,
+      });
+      console.log("📧 Email sent to " + email);
+    } catch (err) {
+      console.log("❌ Error sending email to " + email + ": " + err.toString());
+    }
+  } else {
+    console.log("Email skipped because Supabase insert failed.");
+  }
+
+  // --- LOG QR URL BACK TO SHEET ---
+  const headers = sheet.getDataRange().getValues()[0];
+  const qrHeader = "QR Code URL";
+  let qrCol = headers.indexOf(qrHeader) + 1;
+
+  if (qrCol === 0) {
+    // If the header doesn't exist, create it in the next empty column
+    qrCol = headers.length + 1;
+    sheet.getRange(1, qrCol).setValue(qrHeader);
+  }
+
+  sheet.getRange(row, qrCol).setValue(qrUrl);
+  console.log("🔗 QR URL logged to Sheet for row " + row);
+}
+
+/**
+ * Use this to simulate an event object for manual testing in the script editor.
+ * Only for testing single row — not bulk send.
+ */
+function testOnFormSubmit() {
+  const mockSheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const mockRange = mockSheet.getRange("A2");
+
+  const mockEvent = {
+    source: SpreadsheetApp.getActiveSpreadsheet(),
+    range: mockRange,
+    namedValues: {
+      Timestamp: [new Date()],
+      Name: [mockSheet.getRange("B2").getValue()],
+      Email: [mockSheet.getRange("C2").getValue()],
+    },
+    values: [new Date(), mockSheet.getRange("B2").getValue(), mockSheet.getRange("C2").getValue()],
+  };
+
+  onFormSubmit(mockEvent);
+}
+
+/**
+ * Sends QR codes to all existing participants in the sheet.
+ * Runs once manually — not triggered by form submission.
+ */
+function sendQRCodesToAll() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const lastRow = sheet.getLastRow();
+
+  for (let row = 2; row <= lastRow; row++) {
+    try {
+      const mockEvent = {
+        source: SpreadsheetApp.getActiveSpreadsheet(),
+        range: sheet.getRange(row, 1),
+      };
+      onFormSubmit(mockEvent);
+      Logger.log(`✅ Processed row ${row}`);
+      Utilities.sleep(2000); // Delay between each send to prevent limits
+    } catch (err) {
+      Logger.log(`❌ Error on row ${row}: ${err}`);
+    }
+  }
+}
